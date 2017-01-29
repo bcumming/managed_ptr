@@ -1,0 +1,7 @@
+test
+a.out
+*.o
+.*.swp
+.*.swo
+.*.swn
+.*.swq
