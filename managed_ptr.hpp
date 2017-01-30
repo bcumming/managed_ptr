@@ -2,16 +2,51 @@
 
 #include <memory>
 #include <new>
+#include <cstddef>
 #include <cstdlib>
 
 #include <cuda.h>
 #include <cuda_runtime.h>
 
 
+//
 // TODO
 //  - check cuda errors from cudaMalloc etc.
 //  - support for arbitrary cuda streams
 //  - assertions or execeptions for erroneous actions like dereferencing nullptr
+//
+
+
+// bare bones implementation of standard compliant allocator for managed memory
+template <class T>
+struct managed_allocator {
+    typedef T value_type;
+
+    managed_allocator() = default;
+
+    template <class U>
+    managed_allocator(const managed_allocator<U>& other) {}
+
+    T* allocate(std::size_t n) {
+        T* ptr;
+        auto success = cudaMallocManaged(&ptr, n*sizeof(T));
+        return ptr;
+    }
+
+    void deallocate(T* p, std::size_t n) {
+        cudaFree(p);
+    }
+};
+
+template <class T, class U>
+bool operator==(const managed_allocator<T>& lhs, const managed_allocator<U>& rhs) {
+    return true;
+}
+
+template <class T, class U>
+bool operator!=(const managed_allocator<T>& lhs, const managed_allocator<U>& rhs) {
+    return !(lhs==rhs);
+}
 
 // used to indicate that the type pointed to by the managed_ptr is to be
 // constructed in the managed_ptr constructor
@@ -35,7 +70,8 @@ class managed_ptr {
 
     template <typename... Args>
     managed_ptr(construct_in_place_tag, Args&&... args) {
-        auto success = cudaMallocManaged(&data_, sizeof(element_type));
+        managed_allocator<element_type> allocator;
+        data_ = allocator.allocate(1u);
         synchronize();
         data_ = new (data_) element_type(std::forward<Args>(args)...);
     }
@@ -66,9 +102,10 @@ class managed_ptr {
 
     ~managed_ptr() {
         if (is_allocated()) {
+            managed_allocator<element_type> allocator;
             synchronize(); // required to ensure that memory is not in use on GPU
             data_->~element_type();
-            cudaFree(data_);
+            allocator.deallocate(data_, 1u);
         }
     }
 
